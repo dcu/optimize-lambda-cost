@@ -3,6 +3,7 @@ package analyze
 import (
 	"fmt"
 	"math"
+	"sort"
 
 	"github.com/valyala/histogram"
 )
@@ -51,6 +52,28 @@ func (b *Bucket) CalculateSuggestedMemory(percentile float64) int {
 func (b *Bucket) Print() {
 	fmt.Println(">> Analyzing stats for memory bucket:", b.Size, "(total requests:", b.Count, ")")
 
+	fmt.Println("> Top requests per billed duration")
+	billedDurations := make([][]int64, 0, len(b.CountByBilledDuration))
+	for billedDuration, count := range b.CountByBilledDuration {
+		billedDurations = append(billedDurations, []int64{billedDuration, count})
+	}
+
+	maxCount := int64(0)
+	sort.Slice(billedDurations, func(i, j int) bool {
+		if billedDurations[i][1] > maxCount {
+			maxCount = billedDurations[i][1]
+		}
+
+		return billedDurations[i][0] < billedDurations[j][0]
+	})
+
+	for _, billedDuration := range billedDurations {
+		if billedDuration[1] > int64(float64(maxCount)*0.1) {
+			fmt.Printf("%d ms: %d (%0.2f%%)\n", billedDuration[0], billedDuration[1], (float64(billedDuration[1])/float64(b.Count))*100)
+		}
+	}
+
+	fmt.Println("")
 	fmt.Println("> Distribution for durations")
 	p1duration := b.DurationHist.Quantile(0.01)
 	p25duration := b.DurationHist.Quantile(0.25)
