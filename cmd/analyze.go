@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	"github.com/dcu/optimize-lambda-cost/analyze"
@@ -52,7 +53,7 @@ var analyzeCmd = &cobra.Command{
 		}
 
 		for _, bucket := range buckets {
-			bucket.Print()
+			bucket.Print(os.Stdout)
 		}
 		return nil
 	},

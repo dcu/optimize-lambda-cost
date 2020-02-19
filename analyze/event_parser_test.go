@@ -1,6 +1,7 @@
 package analyze
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -32,7 +33,11 @@ func Test_parseEvents(t *testing.T) {
 	bucket := ep.buckets[128]
 	c.NotNil(bucket)
 
-	bucket.Print()
-	c.Equal(192, bucket.CalculateSuggestedMemory(0.01))
-	c.Equal(896, bucket.CalculateSuggestedMemory(0.99))
+	out := &strings.Builder{}
+	bucket.Print(out)
+
+	c.NotEmpty(out.String())
+
+	c.Equal(256, bucket.CalculateSuggestedMemory(0.01))
+	c.Equal(1600, bucket.CalculateSuggestedMemory(0.99))
 }

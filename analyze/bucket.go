@@ -2,6 +2,7 @@ package analyze
 
 import (
 	"fmt"
+	"io"
 	"math"
 	"sort"
 
@@ -40,7 +41,7 @@ func (b *Bucket) CalculateSuggestedMemory(percentile float64) int {
 
 	currentMemoryPos, _ := findMemoryIndex(int(b.Size)) // memory matters because it's usually proportional to current duration if the task is cpu bounded
 
-	avgPos := (currentMemoryPos + targetDurationPos) / 2
+	avgPos := targetDurationPos + (currentMemoryPos / 2)
 	if avgPos >= len(memoryBuckets) {
 		avgPos = len(memoryBuckets) - 1
 	}
@@ -49,10 +50,14 @@ func (b *Bucket) CalculateSuggestedMemory(percentile float64) int {
 }
 
 // Print information associated with the bucket
-func (b *Bucket) Print() {
-	fmt.Println(">> Analyzing stats for memory bucket:", b.Size, "(total requests:", b.Count, ")")
+func (b *Bucket) Print(output io.Writer) {
+	percentiles := []float64{
+		0.01, 0.25, 0.50, 0.75, 0.99,
+	}
 
-	fmt.Println("> Top requests per billed duration")
+	fmt.Fprintln(output, ">> Analyzing stats for memory bucket:", b.Size, "MB (total requests:", b.Count, ")")
+
+	fmt.Fprintln(output, "> Top requests per billed duration")
 	billedDurations := make([][]int64, 0, len(b.CountByBilledDuration))
 	for billedDuration, count := range b.CountByBilledDuration {
 		billedDurations = append(billedDurations, []int64{billedDuration, count})
@@ -67,58 +72,47 @@ func (b *Bucket) Print() {
 		return billedDurations[i][0] < billedDurations[j][0]
 	})
 
+	estimatedCostPerMillion := 0.20
 	for _, billedDuration := range billedDurations {
+		percent := (float64(billedDuration[1]) / float64(b.Count))
 		if billedDuration[1] > int64(float64(maxCount)*0.1) {
-			fmt.Printf("%d ms: %d (%0.2f%%)\n", billedDuration[0], billedDuration[1], (float64(billedDuration[1])/float64(b.Count))*100)
+			fmt.Fprintf(output, "%d ms: %d (%0.2f%%)\n", billedDuration[0], billedDuration[1], percent*100)
 		}
+
+		totalRequests := 1_000_000.0 * percent
+		units := billedDuration[0] / 100
+
+		estimatedCostPerMillion += costMapping[b.Size] * float64(totalRequests) * float64(units)
 	}
 
-	fmt.Println("")
-	fmt.Println("> Distribution for durations")
-	p1duration := b.DurationHist.Quantile(0.01)
-	p25duration := b.DurationHist.Quantile(0.25)
-	p50duration := b.DurationHist.Quantile(0.50)
-	p75duration := b.DurationHist.Quantile(0.75)
-	p99duration := b.DurationHist.Quantile(0.99)
-	maxDuration := b.DurationHist.Quantile(1)
+	fmt.Fprintf(output, "Estimated cost per million requests: %0.2f$\n", estimatedCostPerMillion)
 
-	printDurationPercentile("1th", p1duration)
-	printDurationPercentile("25th", p25duration)
-	printDurationPercentile("50th", p50duration)
-	printDurationPercentile("75th", p75duration)
-	printDurationPercentile("99th", p99duration)
-	printDurationPercentile("max", maxDuration)
+	fmt.Fprintln(output, "")
+	fmt.Fprintln(output, "> Distribution for durations")
+	for _, percentile := range percentiles {
+		pDuration := b.DurationHist.Quantile(percentile)
+		printDurationPercentile(output, fmt.Sprintf("%dth percentile", int(percentile*100)), pDuration)
+	}
+	fmt.Fprintln(output, "")
 
-	fmt.Println("")
-	fmt.Println("> Distribution for used memory")
-	p1memory := b.MemoryHist.Quantile(0.01)
-	p25memory := b.MemoryHist.Quantile(0.25)
-	p50memory := b.MemoryHist.Quantile(0.50)
-	p75memory := b.MemoryHist.Quantile(0.75)
-	p99memory := b.MemoryHist.Quantile(0.99)
-	maxMemory := b.MemoryHist.Quantile(1)
+	fmt.Fprintln(output, "> Distribution for used memory")
+	for _, percentile := range percentiles {
+		pMemory := b.MemoryHist.Quantile(percentile)
+		fmt.Fprintf(output, "%dth percentile: %0.1f MB\n", int(percentile*100), pMemory)
+	}
+	fmt.Fprintln(output, "")
 
-	fmt.Println("1th ", p1memory, "MB")
-	fmt.Println("25th", p25memory, "MB")
-	fmt.Println("50th", p50memory, "MB")
-	fmt.Println("75th", p75memory, "MB")
-	fmt.Println("99th", p99memory, "MB")
-	fmt.Println("max", maxMemory, "MB")
+	fmt.Fprintln(output, "> Suggested memory based on your usage")
+	for _, percentile := range percentiles {
+		fmt.Fprintf(output, "Suggestion for %dth percentile: %d MB\n", int(percentile*100), b.CalculateSuggestedMemory(percentile))
+	}
 
-	fmt.Println("")
-	fmt.Println("> Suggested memory based on your usage")
-
-	fmt.Printf("Suggestion for 1th percentile: %d MB\n", b.CalculateSuggestedMemory(0.01))
-	fmt.Printf("Suggestion for 25th percentile: %d MB\n", b.CalculateSuggestedMemory(0.25))
-	fmt.Printf("Suggestion for 75th percentile: %d MB\n", b.CalculateSuggestedMemory(0.75))
-	fmt.Printf("Suggestion for 99th percentile: %d MB\n", b.CalculateSuggestedMemory(0.99))
-
-	fmt.Println("")
+	fmt.Fprintln(output, "")
 }
 
-func printDurationPercentile(label string, value float64) {
+func printDurationPercentile(output io.Writer, label string, value float64) {
 	_, billed := findBilledDuration(value)
-	fmt.Println(label, value, "ms", "billed:", billed, "ms")
+	fmt.Fprintln(output, label, value, "ms", "billed:", billed, "ms")
 }
 
 func findMemoryIndex(usedMemory int) (int, int) {
