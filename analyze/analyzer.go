@@ -3,6 +3,7 @@ package analyze
 import (
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -38,34 +39,44 @@ func New(awsProfile string) *Analyzer {
 }
 
 // FetchBuckets fetches the memory buckets found in logs
-func (a *Analyzer) FetchBuckets(functionName string, startTime time.Time) (map[int64]*Bucket, error) {
+func (a *Analyzer) FetchBuckets(functionName string, startTime time.Time, timeout time.Duration) (map[int64]*Bucket, error) {
 	req := &cloudwatchlogs.FilterLogEventsInput{
 		StartTime:     aws.Int64(startTime.UnixNano() / int64(time.Millisecond)),
 		LogGroupName:  aws.String("/aws/lambda/" + functionName),
 		FilterPattern: aws.String("REPORT RequestId"), // https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/FilterAndPatternSyntax.html
 	}
 
+	timeoutCh := time.After(timeout)
+
 	parser := newEventParser()
+
+loop:
 	for i := 0; i < maxFetches; i++ {
-		resp, err := a.client.FilterLogEvents(req)
-		if isThrottle(err) {
-			fmt.Print("T")
-			time.Sleep(1 * time.Second)
-			continue
+		select {
+		case <-timeoutCh:
+			log.Println("fetching logs timed out")
+			break loop
+		default:
+			resp, err := a.client.FilterLogEvents(req)
+			if isThrottle(err) {
+				fmt.Print("T")
+				time.Sleep(1 * time.Second)
+				continue
+			}
+
+			if err != nil {
+				return nil, err
+			}
+
+			parser.parseEvents(resp.Events)
+
+			if resp.NextToken == nil {
+				break
+			}
+
+			req.NextToken = resp.NextToken
+			fmt.Print(".")
 		}
-
-		if err != nil {
-			return nil, err
-		}
-
-		parser.parseEvents(resp.Events)
-
-		if resp.NextToken == nil {
-			break
-		}
-
-		req.NextToken = resp.NextToken
-		fmt.Print(".")
 	}
 	fmt.Println("")
 

@@ -18,5 +18,5 @@ package main
 import "github.com/dcu/optimize-lambda-cost/cmd"
 
 func main() {
-  cmd.Execute()
+	cmd.Execute()
 }

@@ -46,7 +46,7 @@ var analyzeCmd = &cobra.Command{
 		log.Println("Start fetching logs for", args[0], "starting on", startTime)
 
 		analyzer := analyze.New(awsProfile)
-		buckets, err := analyzer.FetchBuckets(args[0], startTime)
+		buckets, err := analyzer.FetchBuckets(args[0], startTime, 5*time.Minute)
 		if err != nil {
 			log.Println("error fetching logs:", err.Error())
 			return err
